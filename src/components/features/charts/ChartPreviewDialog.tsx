@@ -793,6 +793,11 @@ export function ChartPreviewDialog({
                     Cached at {cachedAtDisplay}
                   </span>
                 )}
+                {chartDataMetadata.truncated && (
+                  <span className="px-1.5 py-0.5 rounded-md border border-amber-500/50 text-amber-600 dark:text-amber-400 text-xs">
+                    Result cut off at {chartDataMetadata.rowCount.toLocaleString()} rows
+                  </span>
+                )}
               </div>
             )}
           </div>

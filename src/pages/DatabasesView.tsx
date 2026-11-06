@@ -1,4 +1,4 @@
-import { Plus, Database, Check, X, MoreVertical, Pencil, Trash2, Eye, TrendingUp, Clock, Tag, Filter, Bot, Upload } from "lucide-react";
+import { Plus, Database, Check, X, MoreVertical, Pencil, Trash2, Eye, TrendingUp, Clock, Tag, Filter, Bot, Upload, Plug } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -33,6 +33,8 @@ import {
 } from "../components/ui/table";
 import { toast } from "sonner";
 import { DatabaseConnectionFlow } from "../components/features/databases/DatabaseConnectionFlow";
+import { ConnectorStatusDialog } from "../components/features/databases/ConnectorStatusDialog";
+import type { ConnectorSetupResult } from "../components/features/databases/ConnectorSetup";
 import { DSGraphViewer } from "../components/features/databases/DSGraphViewer";
 import "../components/features/databases/KnowledgeGraph.css";
 import { OntologyViewer } from "../components/features/databases/OntologyViewer";
@@ -51,10 +53,14 @@ import {
   sendOntologyEnrichmentChat,
   applyOntologyEnrichment,
   uploadPbitFile,
+  listConnectors,
+  revokeConnector,
+  type ConnectorInfo,
   type DSGraphPayload,
   type OntologyVersionPayload,
 } from "../services/api";
 import { storeDatabaseMetadata, type DatabaseMetadataEntry } from "../utils/databaseMetadata";
+import { connectorStatusLabel, timeAgo } from "../utils/connectorInstall";
 
 interface DatabaseConnection {
   id: string;
@@ -65,6 +71,32 @@ interface DatabaseConnection {
   status: string;
   lastChecked: string;
   hasDsGraph?: boolean;
+  /** "connector": a connector in the client's environment runs the queries; VizAI holds no database login. */
+  connectionMode?: 'direct' | 'connector';
+  connectorId?: string | null;
+  /** Connector rows show their own status (Online, Offline, Waiting for connector, ...). */
+  statusKind?: 'connected' | 'disconnected' | 'pending' | 'error';
+  statusLabel?: string;
+}
+
+/** Put each connector's live status on its row in the list. */
+function mergeConnectorStatus(rows: DatabaseConnection[], connectors: ConnectorInfo[]): DatabaseConnection[] {
+  const byConnection = new Map(connectors.map((c) => [c.connectionId, c]));
+  return rows.map((row) => {
+    if (row.connectionMode !== 'connector') return row;
+    const connector = byConnection.get(row.id);
+    if (!connector) return row;
+    const { kind, label } = connectorStatusLabel(connector);
+    return {
+      ...row,
+      connectorId: connector.connectorId,
+      // The cards above the list count by status: only an online connector is "active".
+      status: kind,
+      statusKind: kind,
+      statusLabel: label,
+      lastChecked: connector.lastSeenAt ? timeAgo(connector.lastSeenAt) : 'never',
+    };
+  });
 }
 
 interface DatabasesViewProps {
@@ -78,6 +110,7 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedDatabase, setSelectedDatabase] = useState<DatabaseConnection | null>(null);
+  const [connectorDialog, setConnectorDialog] = useState<{ connectorId: string; name: string } | null>(null);
   const [dsGraphDialogOpen, setDsGraphDialogOpen] = useState(false);
   const [isGraphLoading, setIsGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
@@ -161,13 +194,22 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
             type: displayType,
             rawType,
             host: db.host || 'N/A',
-            status: db.status,
+            // A connector has no connection to be "connected" until its status is known (merged below).
+            status: db.connectionMode === 'connector' ? 'pending' : db.status,
             lastChecked: formatTimeAgo(db.lastChecked),
             hasDsGraph: db.hasDsGraph,
+            connectionMode: db.connectionMode,
+            connectorId: db.connectorId,
           };
         });
-        setDatabases(mappedDatabases);
-        return mappedDatabases;
+        // Connector rows get their real status (the generic "connected" above only applies to direct ones).
+        let rows = mappedDatabases;
+        if (rows.some((d) => d.connectionMode === 'connector')) {
+          const connectors = await listConnectors(String(projectId));
+          if (connectors.success && connectors.data) rows = mergeConnectorStatus(rows, connectors.data);
+        }
+        setDatabases(rows);
+        return rows;
       } else {
         toast.error(response.error?.message || "Failed to load databases");
         setDatabases([]);
@@ -190,6 +232,29 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
       setIsLoading(false);
     }
   }, [projectId, fetchDatabases]);
+
+  // Connector rows change by themselves (the client installs, restarts or stops it), so keep them live.
+  const refreshConnectorStatuses = useCallback(async () => {
+    if (!projectId) return;
+    const response = await listConnectors(String(projectId));
+    if (response.success && response.data) {
+      const connectors = response.data;
+      setDatabases((rows) => mergeConnectorStatus(rows, connectors));
+    }
+  }, [projectId]);
+
+  const hasConnectors = databases.some((d) => d.connectionMode === 'connector');
+  useEffect(() => {
+    if (!hasConnectors) return;
+    const timer = window.setInterval(refreshConnectorStatuses, 10000);
+    return () => window.clearInterval(timer);
+  }, [hasConnectors, refreshConnectorStatuses]);
+
+  const handleConnectorFinished = async (result: ConnectorSetupResult) => {
+    setShowConnectionFlow(false);
+    if (projectId) await fetchDatabases();
+    if (result.ready) toast.success(`Connector "${result.name}" is connected.`);
+  };
 
   const handleConnectionFlowComplete = async (connectionData: {
     database: any;
@@ -550,6 +615,10 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
 
   const handleDeleteConnection = async (db: DatabaseConnection) => {
     try {
+      // Cut the connector off first, so it stops at once and its token can never be used again.
+      if (db.connectionMode === 'connector' && db.connectorId) {
+        await revokeConnector(db.connectorId);
+      }
       const response = await deleteConnection(db.id);
 
       if (response.success) {
@@ -579,6 +648,7 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
           projectId={projectId ? String(projectId) : undefined}
           onComplete={handleConnectionFlowComplete}
           onCancel={handleConnectionFlowCancel}
+          onConnectorFinished={handleConnectorFinished}
         />
       </div>
     );
@@ -685,12 +755,24 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
                       <Badge variant="outline" className="border-border">
                         {db.type}
                       </Badge>
+                      {db.connectionMode === 'connector' && (
+                        <Badge variant="outline" className="ml-2 border-primary/30 bg-primary/10 text-primary" data-testid="connector-badge">
+                          <Plug className="w-3 h-3 mr-1" />
+                          Connector
+                        </Badge>
+                      )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{db.host}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {db.connectionMode === 'connector' ? 'via connector' : db.host}
+                    </TableCell>
                     <TableCell>
-                      <StatusBadge
-                        status={db.status === 'connected' ? 'connected' : 'disconnected'}
-                      />
+                      {db.connectionMode === 'connector' ? (
+                        <StatusBadge status={db.statusKind ?? 'pending'} label={db.statusLabel ?? 'Waiting for connector'} />
+                      ) : (
+                        <StatusBadge
+                          status={db.status === 'connected' ? 'connected' : 'disconnected'}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{db.lastChecked}</TableCell>
                     <TableCell>
@@ -705,14 +787,26 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
                             <Database className="w-4 h-4 mr-2" />
                             View DS Graph
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleViewConnection(db)}>
-                            <Eye className="w-4 h-4 mr-2" />
-                            View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleEditConnection(db)}>
-                            <Pencil className="w-4 h-4 mr-2" />
-                            Edit Connection
-                          </DropdownMenuItem>
+                          {db.connectionMode === 'connector' ? (
+                            <DropdownMenuItem
+                              data-testid="menu-connector-status"
+                              onClick={() => db.connectorId && setConnectorDialog({ connectorId: db.connectorId, name: db.name })}
+                            >
+                              <Plug className="w-4 h-4 mr-2" />
+                              Connector status
+                            </DropdownMenuItem>
+                          ) : (
+                            <>
+                              <DropdownMenuItem onClick={() => handleViewConnection(db)}>
+                                <Eye className="w-4 h-4 mr-2" />
+                                View Details
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditConnection(db)}>
+                                <Pencil className="w-4 h-4 mr-2" />
+                                Edit Connection
+                              </DropdownMenuItem>
+                            </>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => handleDeleteConnection(db)}
@@ -1265,6 +1359,16 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <ConnectorStatusDialog
+          open={connectorDialog !== null}
+          onOpenChange={(open) => {
+            if (!open) setConnectorDialog(null);
+          }}
+          connectorId={connectorDialog?.connectorId ?? null}
+          name={connectorDialog?.name ?? ''}
+          onChanged={refreshConnectorStatuses}
+        />
 
       </div>
     </div>
