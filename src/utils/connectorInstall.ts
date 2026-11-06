@@ -1,40 +1,75 @@
 /**
- * Builds the commands a client runs to install the VizAI connector.
+ * Builds the settings a client adds to their deployment to run the VizAI connector as a container.
  *
- * Pure functions: no network, no storage. The download URL, version and extra settings come from the
- * backend (it validates them so they are safe to put in a shell command). The Node command contains no
- * secret: the connection code is typed at the script's prompt, not on the command line.
+ * Pure functions: no network, no storage. The image and extra settings come from the backend, which
+ * validates them. The snippets hold no secret: the token and the database login are references to the
+ * client's own secrets, so a snippet can be pasted into a repository.
  */
 
 import type { ConnectorInstallSettings } from "../services/api";
 
-export interface ConnectorCredentials {
+export interface ConnectorValues {
   connectorId: string;
   gatewayAddress: string;
-  token: string;
 }
 
-function envPrefix(env: string[]): string {
-  return env.length ? `${env.join(" ")} ` : "";
+const CONTAINER_CA_PATH = "/etc/vizai/ca.pem";
+
+function extraEnv(install: ConnectorInstallSettings): Array<[string, string]> {
+  return install.env.map((entry) => {
+    const at = entry.indexOf("=");
+    return [entry.slice(0, at), entry.slice(at + 1)];
+  });
 }
 
-/** For a Node.js app: one script, no database URL. Run it in the app's folder. */
-export function nodeInstallCommand(install: ConnectorInstallSettings): string {
-  const base = install.downloadUrl.replace(/\/+$/, "");
-  return `curl -fsSL ${base}/${install.version}/connect.sh | ${envPrefix(install.env)}sh -s -- --download-url ${base}`;
+/** A private CA is for local testing. A public certificate needs no file, so nothing is mounted. */
+function caFile(install: ConnectorInstallSettings): string | undefined {
+  return extraEnv(install).find(([name]) => name === "VIZAI_TLS_CA_FILE")?.[1];
 }
 
-/** For any other stack on Linux or macOS: runs the connector as a service. The client fills in their own database URL. */
-export function standaloneInstallCommand(install: ConnectorInstallSettings, credentials: ConnectorCredentials): string {
-  const base = install.downloadUrl.replace(/\/+$/, "");
-  return (
-    `curl -fsSL ${base}/${install.version}/install.sh | sudo ` +
-    `${envPrefix(install.env)}` +
-    `VIZAI_GATEWAY_ADDRESS=${credentials.gatewayAddress} ` +
-    `VIZAI_CONNECTOR_ID=${credentials.connectorId} ` +
-    `VIZAI_CONNECTOR_TOKEN=${credentials.token} ` +
-    `VIZAI_DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE' ` +
-    `sh -s -- --download-url ${base}`
+/** A service to add to the client's compose file. */
+export function composeSnippet(install: ConnectorInstallSettings, values: ConnectorValues): string {
+  const ca = caFile(install);
+  const env = extraEnv(install).map(([name, value]): [string, string] => [name, name === "VIZAI_TLS_CA_FILE" ? CONTAINER_CA_PATH : value]);
+  return [
+    "services:",
+    "  vizai-connector:",
+    `    image: ${install.image}`,
+    "    restart: unless-stopped",
+    "    environment:",
+    `      VIZAI_GATEWAY_ADDRESS: "${values.gatewayAddress}"`,
+    `      VIZAI_CONNECTOR_ID: "${values.connectorId}"`,
+    "      VIZAI_CONNECTOR_TOKEN: ${VIZAI_CONNECTOR_TOKEN}",
+    "      VIZAI_DATABASE_URL: ${DATABASE_URL}",
+    ...env.map(([name, value]) => `      ${name}: "${value}"`),
+    ...(ca ? ["    volumes:", `      - "${ca}:${CONTAINER_CA_PATH}:ro"`] : []),
+  ].join("\n");
+}
+
+/**
+ * A container for the client's ECS task definition. Not essential, so a connector problem never stops
+ * their app. Restarts on a crash, but not after exit code 2 (bad settings) or 3 (token revoked or
+ * rotated), which a restart cannot fix.
+ */
+export function ecsContainerSnippet(install: ConnectorInstallSettings, values: ConnectorValues): string {
+  return JSON.stringify(
+    {
+      name: "vizai-connector",
+      image: install.image,
+      essential: false,
+      restartPolicy: { enabled: true, ignoredExitCodes: [0, 2, 3] },
+      environment: [
+        { name: "VIZAI_GATEWAY_ADDRESS", value: values.gatewayAddress },
+        { name: "VIZAI_CONNECTOR_ID", value: values.connectorId },
+        ...extraEnv(install).map(([name, value]) => ({ name, value })),
+      ],
+      secrets: [
+        { name: "VIZAI_CONNECTOR_TOKEN", valueFrom: "<ARN of the secret holding this token>" },
+        { name: "VIZAI_DATABASE_URL", valueFrom: "<ARN of your app's database URL secret>" },
+      ],
+    },
+    null,
+    2
   );
 }
 

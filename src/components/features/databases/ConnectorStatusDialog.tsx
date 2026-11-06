@@ -2,7 +2,7 @@
  * ConnectorStatusDialog
  *
  * Details and actions for one connector: status, agent version, last seen, connected instances, and
- * Refresh schema / Rotate token / Revoke. Rotating shows the new connection code once.
+ * Refresh schema / Rotate token / Revoke. Rotating shows the new token once.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -166,10 +166,9 @@ export function ConnectorStatusDialog({ open, onOpenChange, connectorId, name, o
         {rotated && (
           <div className="rounded-lg border border-border p-4 space-y-3" data-testid="rotated-panel">
             <p className="text-sm text-foreground">
-              The connector was disconnected. Run the command again with this new code to connect it.
+              The connector was disconnected. Put this new token in your secret and redeploy the connector to connect it.
             </p>
             <ConnectorInstallPanel
-              connectionCode={rotated.connectionCode}
               connectorId={rotated.connectorId}
               gatewayAddress={rotated.gatewayAddress}
               token={rotated.token}
@@ -182,7 +181,7 @@ export function ConnectorStatusDialog({ open, onOpenChange, connectorId, name, o
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3" data-testid="confirm-panel">
             <p className="text-sm text-foreground">
               {confirm === "rotate"
-                ? "This disconnects the connector now. It stays offline until you run the install command again with the new code."
+                ? "This disconnects the connector now. It stays offline until you redeploy it with the new token."
                 : "This cuts the connector off for good. It cannot be undone, and you will need to create a new connector to reconnect."}
             </p>
             <div className="flex gap-2">

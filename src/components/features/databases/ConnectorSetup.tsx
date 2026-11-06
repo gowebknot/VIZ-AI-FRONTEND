@@ -3,8 +3,8 @@
  *
  * "Use a connector": the client's own connector reads their database, so VizAI never holds the login.
  *
- *   1. Name the connection  ->  VizAI creates the connector and shows a one-time connection code
- *   2. Install screen: the command for the client's stack, with live status while they run it
+ *   1. Name the connection  ->  VizAI creates the connector and shows a one-time token
+ *   2. Install screen: the container settings for their deployment, with live status while they deploy it
  *
  * Unlike a direct connection, nothing here can finish on its own: the schema arrives only after the
  * client has installed the connector, which may be minutes or days later. So this screen never blocks.
@@ -33,7 +33,7 @@ export interface ConnectorSetupResult {
 
 interface ConnectorSetupProps {
   projectId?: string;
-  /** The connector now exists, so the wizard can warn before the one-time code is lost. */
+  /** The connector now exists, so the wizard can warn before the one-time token is lost. */
   onCreated?: (created: { connectionId: string; name: string }) => void;
   onFinished: (result: ConnectorSetupResult) => void;
 }
@@ -146,7 +146,7 @@ export function ConnectorSetup({ projectId, onCreated, onFinished }: ConnectorSe
         <div>
           <h2 className="text-xl text-foreground mb-1">Use a connector</h2>
           <p className="text-sm text-muted-foreground">
-            VizAI creates a connector for you to install next to your database. Your database login never leaves your environment.
+            VizAI creates a connector for you to run as a container next to your app. Your database login never leaves your environment.
           </p>
         </div>
 
@@ -203,12 +203,11 @@ export function ConnectorSetup({ projectId, onCreated, onFinished }: ConnectorSe
       <div>
         <h2 className="text-xl text-foreground mb-1">Install your connector</h2>
         <p className="text-sm text-muted-foreground">
-          "{name.trim()}" is created. Run the command below where your database can be reached. This page updates by itself.
+          "{name.trim()}" is created. Add the connector to your deployment using the values below. This page updates by itself.
         </p>
       </div>
 
       <ConnectorInstallPanel
-        connectionCode={created.connectionCode}
         connectorId={created.connectorId}
         gatewayAddress={created.gatewayAddress}
         token={created.token}

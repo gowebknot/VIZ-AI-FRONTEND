@@ -34,13 +34,13 @@ interface DatabaseConnectionFlowProps {
 
 export function DatabaseConnectionFlow({ projectId, onComplete, onCancel, onConnectorFinished }: DatabaseConnectionFlowProps) {
   const [mode, setMode] = useState<"choose" | ConnectionMode>("choose");
-  // Set once a connector exists. Its connection code is shown only once, so leaving needs a warning.
+  // Set once a connector exists. Its token is shown only once, so leaving needs a warning.
   const [createdConnector, setCreatedConnector] = useState<{ connectionId: string; name: string } | null>(null);
 
   const leave = () => {
     if (createdConnector) {
       const sure = window.confirm(
-        "Your connection code is shown only once. If you leave now you can still get a new one later with Rotate token. Leave anyway?"
+        "Your connector token is shown only once. If you leave now you can still get a new one later with Rotate token. Leave anyway?"
       );
       if (!sure) return;
       onConnectorFinished?.({ ...createdConnector, ready: false });

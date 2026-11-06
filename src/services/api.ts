@@ -4399,10 +4399,11 @@ export const deleteKnowledgeGraph = async (graphId: string): Promise<ApiResponse
 
 export type ConnectorState = 'online' | 'offline' | 'revoked';
 
-/** What the install screen needs to build the client's command. */
+/** What the install screen needs to build the client's container settings. */
 export interface ConnectorInstallSettings {
   downloadUrl: string;
   version: string;
+  image: string;
   env: string[];
 }
 
@@ -4439,7 +4440,6 @@ export interface CreatedConnector {
   gatewayAddress: string;
   dialect: string;
   token: string;
-  connectionCode: string;
   install: ConnectorInstallSettings;
 }
 
@@ -4447,7 +4447,6 @@ export interface RotatedConnectorToken {
   connectorId: string;
   gatewayAddress: string;
   token: string;
-  connectionCode: string;
   install: ConnectorInstallSettings;
 }
 
@@ -4456,7 +4455,7 @@ const connectorFailure = (code: string, fallback: string, error: any) => ({
   error: { code, message: error?.message || fallback },
 });
 
-/** Create a connector and its datasource. The connection code is in the response only. */
+/** Create a connector and its datasource. The token is in the response only. */
 export const createConnector = async (
   projectId: string,
   data: { connectionName: string }
