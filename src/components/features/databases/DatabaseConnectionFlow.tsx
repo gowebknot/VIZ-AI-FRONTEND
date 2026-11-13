@@ -1,17 +1,24 @@
 /**
  * DatabaseConnectionFlow Component
  *
- * A single-step wizard for adding database connections:
+ * A wizard for adding database connections. It starts with a choice:
  *
- * Step 1: Database Connection Setup
+ * "Connect directly"
  *   - Form-based or connection string method
  *   - Validates and tests the connection
  *   - On success, immediately redirects to charts page (no conversation step)
+ *
+ * "Use a connector"
+ *   - VizAI creates a connector; the client installs it next to their database, so their
+ *     database login is never shared with VizAI (see ConnectorSetup)
  */
 
+import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Database, ArrowLeft } from "lucide-react";
 import { DatabaseSetupGuided } from "./DatabaseSetupGuided.tsx";
+import { ConnectionTypeChoice, type ConnectionMode } from "./ConnectionTypeChoice";
+import { ConnectorSetup, type ConnectorSetupResult } from "./ConnectorSetup";
 
 interface DatabaseConnectionFlowProps {
   projectId?: string;
@@ -21,11 +28,33 @@ interface DatabaseConnectionFlowProps {
     databaseContext: Record<string, string>;
   }) => void;
   onCancel: () => void;
+  /** A connector was set up (or left to finish later). The connection is already created. */
+  onConnectorFinished?: (result: ConnectorSetupResult) => void;
 }
 
-export function DatabaseConnectionFlow({ projectId, onComplete, onCancel }: DatabaseConnectionFlowProps) {
-  const handleBack = () => {
+export function DatabaseConnectionFlow({ projectId, onComplete, onCancel, onConnectorFinished }: DatabaseConnectionFlowProps) {
+  const [mode, setMode] = useState<"choose" | ConnectionMode>("choose");
+  // Set once a connector exists. Its token is shown only once, so leaving needs a warning.
+  const [createdConnector, setCreatedConnector] = useState<{ connectionId: string; name: string } | null>(null);
+
+  const leave = () => {
+    if (createdConnector) {
+      const sure = window.confirm(
+        "Your connector token is shown only once. If you leave now you can still get a new one later with Rotate token. Leave anyway?"
+      );
+      if (!sure) return;
+      onConnectorFinished?.({ ...createdConnector, ready: false });
+      return;
+    }
     onCancel();
+  };
+
+  const handleBack = () => {
+    if (mode === "choose" || createdConnector) {
+      leave();
+      return;
+    }
+    setMode("choose");
   };
 
   // When the DB connection succeeds, skip the conversation step and complete immediately.
@@ -49,12 +78,14 @@ export function DatabaseConnectionFlow({ projectId, onComplete, onCancel }: Data
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={handleBack}
+            data-testid="wizard-back"
             className="inline-flex items-center justify-center rounded-md border border-border bg-transparent px-3 py-2 text-sm hover:bg-muted transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <button
-            onClick={onCancel}
+            onClick={leave}
+            data-testid="wizard-cancel"
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             Cancel
@@ -76,17 +107,27 @@ export function DatabaseConnectionFlow({ projectId, onComplete, onCancel }: Data
         {/* Step Content */}
         <AnimatePresence mode="wait">
           <motion.div
-            key="step1"
+            key={mode}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
           >
-            <DatabaseSetupGuided
-              projectName="your workspace"
-              projectId={projectId}
-              onComplete={handleDatabaseComplete}
-            />
+            {mode === "choose" && <ConnectionTypeChoice onChoose={setMode} />}
+            {mode === "direct" && (
+              <DatabaseSetupGuided
+                projectName="your workspace"
+                projectId={projectId}
+                onComplete={handleDatabaseComplete}
+              />
+            )}
+            {mode === "connector" && (
+              <ConnectorSetup
+                projectId={projectId}
+                onCreated={setCreatedConnector}
+                onFinished={(result) => onConnectorFinished?.(result)}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </div>

@@ -1128,6 +1128,12 @@ export function DashboardDetailView({
                       <span className="ml-2 text-sm text-muted-foreground">Loading chart data...</span>
                     </div>
                   ) : chartConfig.data.length > 0 ? (
+                    <>
+                    {chart.chartData?.metadata?.truncated && (
+                      <p className="mb-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                      Showing the first {chart.chartData.metadata.rowCount.toLocaleString()} rows. The result was cut off at the connector&apos;s row limit.
+                    </p>
+                    )}
                     <ChartCard
                       type={chartConfig.effectiveType}
                       data={chartConfig.data}
@@ -1142,6 +1148,7 @@ export function DashboardDetailView({
                       height={300}
                       showLegend={!!chartConfig.dataKeys.secondary && chartConfig.effectiveType !== 'pie'}
                     />
+                    </>
                   ) : (
                     <div className="h-[300px] flex items-center justify-center border border-dashed border-border rounded-lg">
                       <div className="text-center">

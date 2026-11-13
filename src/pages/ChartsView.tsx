@@ -1328,6 +1328,11 @@ export function ChartsView({ currentUser, projectId, onChartCreated, pendingChar
 
         {!isLoading && !error && preparedData.data.length > 0 && hasQueryAndConnection && (
           <div className="min-h-0 flex-1 w-full">
+            {status?.metadata?.truncated && (
+              <p className="mb-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                Showing the first {status.metadata.rowCount.toLocaleString()} rows. The result was cut off at the connector&apos;s row limit.
+              </p>
+            )}
             <ChartCard
               type={displayChartType}
               data={preparedData.data}

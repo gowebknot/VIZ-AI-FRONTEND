@@ -1184,6 +1184,8 @@ export interface ChartData {
     cachedAt: string | null;
     xAxis?: string | null;
     yAxis?: string | null;
+    /** True when a connector datasource cut the result off at its row or size limit. */
+    truncated?: boolean;
   };
 }
 
@@ -1602,6 +1604,7 @@ export const getChartData = async (
       y_axis?: string | null;
       execution_time_ms?: number;
       cached_at?: string | null;
+      truncated?: boolean;
     }>(`/api/v1/backend/excecute-query/${datasourceConnectionId}/`, {
       method: 'POST',
       body: JSON.stringify(requestBody),
@@ -1621,6 +1624,7 @@ export const getChartData = async (
         cachedAt: response.cached_at ?? null,
         xAxis: response.x_axis ?? null,
         yAxis: response.y_axis ?? null,
+        ...(response.truncated === true ? { truncated: true } : {}),
       },
     };
 
@@ -1852,6 +1856,9 @@ export interface Database {
   hasDsGraph?: boolean;
   connectionString?: string | null;
   consentGiven?: boolean;
+  /** "connector": the client's own connector runs the queries and VizAI holds no database login. */
+  connectionMode?: 'direct' | 'connector';
+  connectorId?: string | null;
 }
 
 export interface DSGraphNode {
@@ -1978,6 +1985,8 @@ export const getDatabases = async (projectId: string): Promise<ApiResponse<Datab
         ds_graph_json?: string;
         has_ds_graph?: boolean;
         db_connection_string?: string;
+        connection_mode?: string;
+        connector_id?: string | null;
       }>;
     }>(`/api/v1/backend/connections/${projectId}`);
 
@@ -1995,6 +2004,8 @@ export const getDatabases = async (projectId: string): Promise<ApiResponse<Datab
       ds_graph_json?: string;
       has_ds_graph?: boolean;
       db_connection_string?: string;
+      connection_mode?: string;
+      connector_id?: string | null;
     }> = [];
 
     if (response.connections && Array.isArray(response.connections)) {
@@ -2018,6 +2029,8 @@ export const getDatabases = async (projectId: string): Promise<ApiResponse<Datab
         hasDsGraph: conn.has_ds_graph ?? undefined,
         connectionString: conn.db_connection_string ?? null,
         consentGiven: conn.consent_given ?? undefined,
+        connectionMode: conn.connection_mode === 'connector' ? 'connector' as const : 'direct' as const,
+        connectorId: conn.connector_id ?? null,
       })),
     };
   } catch (error: any) {
@@ -4377,5 +4390,133 @@ export const deleteKnowledgeGraph = async (graphId: string): Promise<ApiResponse
     return { success: true, data };
   } catch (error: any) {
     return { success: false, error: { code: 'KG_DELETE_FAILED', message: error.message || 'Failed to delete knowledge graph' } };
+  }
+};
+
+// ============================================================================
+// CONNECTORS (a client's own connector runs the queries; VizAI never holds the database login)
+// ============================================================================
+
+export type ConnectorState = 'online' | 'offline' | 'revoked';
+
+/** What the install screen needs to build the client's container settings. */
+export interface ConnectorInstallSettings {
+  downloadUrl: string;
+  version: string;
+  image: string;
+  env: string[];
+}
+
+export interface ConnectorInstance {
+  instanceId: string;
+  agentVersion: string;
+  peer: string;
+  connectedAt: string;
+  lastSeenAt: string;
+  inflight: number;
+}
+
+export interface ConnectorInfo {
+  connectorId: string;
+  connectionId: string | null;
+  projectId: string;
+  name: string;
+  status: ConnectorState;
+  dialect: string | null;
+  agentVersion: string | null;
+  protocolVersion: string | null;
+  hasSchema: boolean;
+  schemaHash: string | null;
+  lastSeenAt: string | null;
+  createdAt: string | null;
+  instances: ConnectorInstance[];
+}
+
+/** Returned once, when a connector is created. The token and code cannot be fetched again. */
+export interface CreatedConnector {
+  connectorId: string;
+  connectionId: string;
+  taskId: string;
+  gatewayAddress: string;
+  dialect: string;
+  token: string;
+  install: ConnectorInstallSettings;
+}
+
+export interface RotatedConnectorToken {
+  connectorId: string;
+  gatewayAddress: string;
+  token: string;
+  install: ConnectorInstallSettings;
+}
+
+const connectorFailure = (code: string, fallback: string, error: any) => ({
+  success: false as const,
+  error: { code, message: error?.message || fallback },
+});
+
+/** Create a connector and its datasource. The token is in the response only. */
+export const createConnector = async (
+  projectId: string,
+  data: { connectionName: string }
+): Promise<ApiResponse<CreatedConnector>> => {
+  try {
+    const response = await apiRequest<CreatedConnector>(`/api/v1/backend/connectors/projects/${projectId}`, {
+      method: 'POST',
+      body: JSON.stringify({ connection_name: data.connectionName, consent_given: true }),
+    });
+    return { success: true, data: response };
+  } catch (error: any) {
+    return connectorFailure('CREATE_CONNECTOR_FAILED', 'Failed to create the connector', error);
+  }
+};
+
+/** Every connector in a project, with live status. */
+export const listConnectors = async (projectId: string): Promise<ApiResponse<ConnectorInfo[]>> => {
+  try {
+    const response = await apiRequest<{ connectors: ConnectorInfo[] }>(`/api/v1/backend/connectors/projects/${projectId}`);
+    return { success: true, data: response.connectors };
+  } catch (error: any) {
+    return connectorFailure('LIST_CONNECTORS_FAILED', 'Failed to load connectors', error);
+  }
+};
+
+/** One connector, with its connected instances. */
+export const getConnector = async (connectorId: string): Promise<ApiResponse<ConnectorInfo>> => {
+  try {
+    const response = await apiRequest<ConnectorInfo>(`/api/v1/backend/connectors/${connectorId}`);
+    return { success: true, data: response };
+  } catch (error: any) {
+    return connectorFailure('GET_CONNECTOR_FAILED', 'Failed to load the connector', error);
+  }
+};
+
+/** A new token. The old one stops working and connected agents are disconnected. */
+export const rotateConnectorToken = async (connectorId: string): Promise<ApiResponse<RotatedConnectorToken>> => {
+  try {
+    const response = await apiRequest<RotatedConnectorToken>(`/api/v1/backend/connectors/${connectorId}/rotate-token`, { method: 'POST' });
+    return { success: true, data: response };
+  } catch (error: any) {
+    return connectorFailure('ROTATE_CONNECTOR_FAILED', 'Failed to rotate the token', error);
+  }
+};
+
+/** Cut a connector off for good. */
+export const revokeConnector = async (connectorId: string): Promise<ApiResponse<ConnectorInfo>> => {
+  try {
+    const response = await apiRequest<ConnectorInfo>(`/api/v1/backend/connectors/${connectorId}/revoke`, { method: 'POST' });
+    return { success: true, data: response };
+  } catch (error: any) {
+    return connectorFailure('REVOKE_CONNECTOR_FAILED', 'Failed to revoke the connector', error);
+  }
+};
+
+/** Ask a connected connector to read its database's structure again. */
+export const refreshConnectorSchema = async (connectorId: string): Promise<ApiResponse<{ requested: boolean }>> => {
+  try {
+    const response = await apiRequest<{ requested: boolean }>(`/api/v1/backend/connectors/${connectorId}/refresh-schema`, { method: 'POST' });
+    return { success: true, data: response };
+  } catch (error: any) {
+    return connectorFailure('REFRESH_CONNECTOR_FAILED', 'Failed to request a schema refresh', error);
   }
 };
