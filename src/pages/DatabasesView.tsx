@@ -39,7 +39,7 @@ import { DSGraphViewer } from "../components/features/databases/DSGraphViewer";
 import "../components/features/databases/KnowledgeGraph.css";
 import { OntologyViewer } from "../components/features/databases/OntologyViewer";
 import { KnowledgeGraphViewer, type KnowledgeGraphViewerHandle } from "../components/features/databases/KnowledgeGraphViewer";
-import { OnboardingTour, type TourOutcome } from "../components/shared/OnboardingTour";
+import { OnboardingTour } from "../components/shared/OnboardingTour";
 
 import {
   getDatabases,
@@ -116,6 +116,8 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [currentGraph, setCurrentGraph] = useState<DSGraphPayload | null>(null);
   const [showTour, setShowTour] = useState(false);
+  // The first connection runs the tour on this page first; its graph opens when the tour ends.
+  const [postTourDb, setPostTourDb] = useState<DatabaseConnection | null>(null);
   const [dsGraphTab, setDsGraphTab] = useState<"datasource" | "knowledge">("datasource");
   const kgViewerRef = useRef<KnowledgeGraphViewerHandle>(null);
 
@@ -289,7 +291,14 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
       // Database-driven tour trigger: the refreshed list already includes the
       // just-added connection, so length === 1 means this was the first one.
       const isFirstConnection = refreshedDatabases.length <= 1;
-      await handleViewDSGraph(connectedDb, { startTour: isFirstConnection });
+      if (isFirstConnection) {
+        // Tour first, here on the Databases page where the sidebar is visible. The datasource
+        // graph opens when the tour is finished or skipped.
+        setPostTourDb(connectedDb);
+        setShowTour(true);
+      } else {
+        await handleViewDSGraph(connectedDb);
+      }
     }
   };
 
@@ -298,10 +307,7 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
     setViewDialogOpen(true);
   };
 
-  const handleViewDSGraph = async (
-    db: DatabaseConnection,
-    options?: { startTour?: boolean }
-  ) => {
+  const handleViewDSGraph = async (db: DatabaseConnection) => {
     setSelectedDatabase(db);
     setDsGraphDialogOpen(true);
     setIsGraphLoading(true);
@@ -311,11 +317,6 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
       const response = await getDatabaseDSGraph(db.id);
       if (response.success && response.data) {
         setCurrentGraph(response.data);
-        // Start the tour only when the caller explicitly requests it
-        // (determined by connection count in handleConnectionFlowComplete)
-        if (options?.startTour) {
-          setShowTour(true);
-        }
       } else {
         setGraphError(response.error?.message || "Unable to load datasource graph");
       }
@@ -971,7 +972,6 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
         <Dialog open={dsGraphDialogOpen} onOpenChange={(open) => {
           setDsGraphDialogOpen(open);
           if (!open) {
-            setShowTour(false);
             setDsGraphTab("datasource");
           }
         }}>
@@ -979,22 +979,6 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
             className="!w-[94vw] !max-w-[94vw] sm:!max-w-[94vw] h-[90vh] max-h-[90vh] p-4 gap-3 flex flex-col overflow-hidden"
             style={{ width: "94vw", maxWidth: "94vw", height: "90vh", maxHeight: "90vh" }}
             data-tour-container="ds-graph-dialog"
-            hideCloseButton={showTour}
-            onInteractOutside={(event) => {
-              if (showTour) {
-                event.preventDefault();
-              }
-            }}
-            onPointerDownOutside={(event) => {
-              if (showTour) {
-                event.preventDefault();
-              }
-            }}
-            onEscapeKeyDown={(event) => {
-              if (showTour) {
-                event.preventDefault();
-              }
-            }}
           >
             {/* ── Tab bar + action button ── */}
             <div className="flex items-start justify-between pr-8 shrink-0">
@@ -1052,24 +1036,20 @@ export function DatabasesView({ projectId }: DatabasesViewProps) {
               </div>
             )}
 
-            {/* Guided onboarding tour – rendered inside the dialog so
-                react-joyride's portal sits above it */}
-            <OnboardingTour
-              run={showTour}
-              onTourEnd={(outcome: TourOutcome) => {
-                setShowTour(false);
-                if (outcome === 'skipped') {
-                  // Fully reset: close the DS Graph dialog to restore
-                  // the pre-tour state (databases list view)
-                  setDsGraphDialogOpen(false);
-                  setCurrentGraph(null);
-                  setSelectedDatabase(null);
-                }
-                // 'finished' → keep DS Graph dialog open, no extra action
-              }}
-            />
           </DialogContent>
         </Dialog>
+
+        {/* Guided onboarding tour: runs on this page (sidebar visible). Finished or skipped,
+            the datasource graph of the new connection opens next. */}
+        <OnboardingTour
+          run={showTour}
+          onTourEnd={() => {
+            setShowTour(false);
+            const db = postTourDb;
+            setPostTourDb(null);
+            if (db) void handleViewDSGraph(db);
+          }}
+        />
 
         {/* ── Ontology Explorer Dialog ── */}
         <Dialog

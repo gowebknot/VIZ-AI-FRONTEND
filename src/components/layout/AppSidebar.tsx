@@ -45,7 +45,7 @@ const WORKSPACE_ITEMS: NavItem[] = [
 
 const DATA_ITEMS: NavItem[] = [
   { id: "databases", label: "Databases", icon: Database },
-  { id: "ontology", label: "Data Ontology", icon: BookOpen },
+  { id: "ontology", label: "Data Ontology", icon: BookOpen, tourId: "tour-sidebar-ontology" },
   { id: "team", label: "Team", icon: Users },
 ];
 
