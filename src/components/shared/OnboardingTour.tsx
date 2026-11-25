@@ -14,7 +14,7 @@ import React, { useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { driver, type Driver, type PopoverDOM } from "driver.js";
 import "driver.js/dist/driver.css";
-import { Sparkles, BarChart3, LayoutDashboard } from "lucide-react";
+import { BookOpen, BarChart3, LayoutDashboard } from "lucide-react";
 import { PopupCard } from "./PopupCard";
 import { Button } from "../ui/button";
 import { GradientButton } from "./GradientButton";
@@ -41,14 +41,8 @@ interface TourStepMeta {
   description: string;
 }
 
+// The tour runs on the Databases page, so every target is a sidebar item (top to bottom).
 const TOUR_STEPS: TourStepMeta[] = [
-  {
-    target: '[data-tour-target="enrich-datasource-btn"]',
-    icon: <Sparkles />,
-    title: "Enrich Datasource",
-    description:
-      "Enhance your data with intelligent insights — detect relationships, enrich metadata, and improve context automatically.",
-  },
   {
     target: "#tour-sidebar-charts",
     icon: <BarChart3 />,
@@ -63,7 +57,20 @@ const TOUR_STEPS: TourStepMeta[] = [
     description:
       "Build custom dashboards by arranging charts side by side. Share with your team or keep them private for personal analytics.",
   },
+  {
+    target: "#tour-sidebar-ontology",
+    icon: <BookOpen />,
+    title: "Data Ontology",
+    description:
+      "Enrich your datasource with intelligent insights — detect relationships, enrich metadata, and improve context automatically.",
+  },
 ];
+
+/** True when the element exists and is actually rendered (not display:none). */
+function isTargetVisible(selector: string): boolean {
+  const el = document.querySelector(selector);
+  return !!el && el.getClientRects().length > 0;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Popover content renderer                                            */
@@ -85,15 +92,13 @@ const TOUR_STEPS: TourStepMeta[] = [
  */
 function renderPopoverContent(
   popover: PopoverDOM,
-  stepIndex: number,
+  meta: TourStepMeta,
   isLastStep: boolean,
   onSkip: () => void,
   onNext: () => void,
   onFinish: () => void,
   previousRoot: Root | null  // only used for cleanup; never reused as mount
 ): Root {
-  const meta = TOUR_STEPS[stepIndex];
-
   // Unmount the previous step's root before we take over the wrapper
   if (previousRoot) {
     try { previousRoot.unmount(); } catch { /* ignore */ }
@@ -226,6 +231,15 @@ export function OnboardingTour({ run, onTourEnd }: OnboardingTourProps) {
 
     outcomeRef.current = null;
 
+    // Only walk through the steps whose target is on screen right now (for example the sidebar
+    // can be hidden on a small screen). A step with no target would show a floating card.
+    const activeSteps = TOUR_STEPS.filter((step) => isTargetVisible(step.target));
+    if (activeSteps.length === 0) {
+      outcomeRef.current = "finished";
+      onTourEndRef.current("finished");
+      return;
+    }
+
     // Mutable root ref used by onPopoverRender (replaced each step)
     let currentRoot: Root | null = null;
 
@@ -260,54 +274,28 @@ export function OnboardingTour({ run, onTourEnd }: OnboardingTourProps) {
       disableActiveInteraction: false,
 
       // ── Steps ─────────────────────────────────────────────────────
-      // BUG 1 FIX: per-step side/align matched to each target's screen position.
-      //   Step 1 — "Enrich Datasource" button sits at the top-right of the
-      //            dialog. side:"bottom" tried to place the card below, but the
-      //            dialog is near the top of the viewport so the card clipped.
-      //            side:"left" places it to the left of the button where there
-      //            is ample room.
-      //   Steps 2-3 — sidebar items are on the left edge; side:"right" keeps
-      //            the card in the centre of the viewport.
-      steps: [
-        {
-          element: TOUR_STEPS[0].target,
-          popover: {
-            title: TOUR_STEPS[0].title,
-            description: TOUR_STEPS[0].description,
-            side: "left" as const,
-            align: "start" as const,
-          },
+      // All targets are sidebar items on the left edge; side:"right" keeps the card in the
+      // centre of the viewport.
+      steps: activeSteps.map((step) => ({
+        element: step.target,
+        popover: {
+          title: step.title,
+          description: step.description,
+          side: "right" as const,
+          align: "start" as const,
         },
-        {
-          element: TOUR_STEPS[1].target,
-          popover: {
-            title: TOUR_STEPS[1].title,
-            description: TOUR_STEPS[1].description,
-            side: "right" as const,
-            align: "start" as const,
-          },
-        },
-        {
-          element: TOUR_STEPS[2].target,
-          popover: {
-            title: TOUR_STEPS[2].title,
-            description: TOUR_STEPS[2].description,
-            side: "right" as const,
-            align: "start" as const,
-          },
-        },
-      ],
+      })),
 
       // ── Custom popover rendering ───────────────────────────────────
       onPopoverRender: (popover: PopoverDOM) => {
         const activeIndex = driverInstance.getActiveIndex() ?? 0;
-        const isLastStep = activeIndex === TOUR_STEPS.length - 1;
+        const isLastStep = activeIndex === activeSteps.length - 1;
 
         // Pass currentRoot only for cleanup (unmount). renderPopoverContent
         // always creates a fresh root — it never reuses currentRoot as a mount.
         currentRoot = renderPopoverContent(
           popover,
-          activeIndex,
+          activeSteps[activeIndex],
           isLastStep,
           handleSkip,
           handleNext,
