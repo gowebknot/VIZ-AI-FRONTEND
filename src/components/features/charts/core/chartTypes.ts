@@ -59,3 +59,17 @@ export interface ChartOptionBuildProps extends ChartRendererProps {
 
 /** @alias Stable public name used by `ChartCard` consumers. */
 export type ChartCardProps = ChartOptionBuildProps;
+
+/** Words for chart types whose raw name is not readable ("stackedhorizontalbar"). */
+const CHART_TYPE_LABELS: Record<string, string> = {
+  stackedlinechart: "Stacked line",
+  stackedhorizontalbar: "Stacked horizontal bar",
+  multiyaxischart: "Multi Y axis",
+};
+
+/** A readable name for a chart type, for labels such as "Stacked horizontal bar". */
+export function chartTypeLabel(type: string | null | undefined): string {
+  const key = String(type ?? "").trim().toLowerCase();
+  if (!key) return "";
+  return CHART_TYPE_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}

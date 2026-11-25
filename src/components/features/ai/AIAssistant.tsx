@@ -11,6 +11,7 @@ import "./AIAssistant.css";
 import { useChartGenerationStore } from "../../../store/chartGenerationStore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 import type { ChartAxisConfig, ChartType } from "../charts/core/chartTypes";
+import { chartTypeLabel } from "../charts/core/chartTypes";
 import { normalizeChartSpec } from "../../../utils/chartSpecNormalizer";
 
 /** Maps WebSocket `chart_spec` → preview model; all `x_axis` / `y_axis` reads go through `normalizeChartSpec`. */
@@ -1308,7 +1309,7 @@ export function AIAssistant({ isOpen, onOpenChange, projectId, currentTab, onCha
                 })()}
               </span>
               <div className="flex-1 min-w-0">
-                <p className="ai-editing-label">Editing chart · <span className="capitalize">{editingChart.type}</span></p>
+                <p className="ai-editing-label">Editing chart · <span>{chartTypeLabel(editingChart.type)}</span></p>
                 <p className="ai-editing-name">{editingChart.name}</p>
               </div>
               <p className="ai-editing-hint">Ask to change the type, data or styling.</p>
@@ -1386,7 +1387,7 @@ export function AIAssistant({ isOpen, onOpenChange, projectId, currentTab, onCha
                                       </span>
                                       <div className="min-w-0 flex-1">
                                         <p className="ai-suggestion-name">{suggestion.name}</p>
-                                        <span className="ai-suggestion-type">{suggestion.type}</span>
+                                        <span className="ai-suggestion-type">{chartTypeLabel(suggestion.type)}</span>
                                       </div>
                                     </div>
                                     <p className="ai-suggestion-desc">{suggestion.description}</p>
